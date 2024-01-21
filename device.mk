@@ -264,7 +264,6 @@ PRODUCT_ENFORCE_RRO_TARGETS := *
 PRODUCT_BOOT_JARS += \
     mediatek-common \
     mediatek-framework \
-    mediatek-services \
     mediatek-telecom-common \
     mediatek-telephony-common \
     mediatek-telephony-base \
