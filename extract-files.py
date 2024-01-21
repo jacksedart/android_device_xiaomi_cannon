@@ -11,11 +11,9 @@ from extract_utils.fixups_blob import (
 )
 
 from extract_utils.fixups_lib import (
-    lib_fixup_remove_arch_suffix,
-    lib_fixup_vendorcompat,
+    lib_fixup_remove,
+    lib_fixups,
     lib_fixups_user_type,
-    libs_clang_rt_ubsan,
-    libs_proto_3_9_1,
 )
 
 from extract_utils.main import (
@@ -30,9 +28,13 @@ namespace_imports = [
     'hardware/xiaomi',
 ]
 
+def lib_fixup_vendor_suffix(lib: str, partition: str, *args, **kwargs):
+    return f'{lib}_{partition}' if partition == 'vendor' else None
+
 lib_fixups: lib_fixups_user_type = {
-    libs_clang_rt_ubsan: lib_fixup_remove_arch_suffix,
-    libs_proto_3_9_1: lib_fixup_vendorcompat,
+    **lib_fixups,
+    ('vendor.mediatek.hardware.videotelephony@1.0',): lib_fixup_vendor_suffix,
+    ('libsink',): lib_fixup_remove,
 }
 
 blob_fixups: blob_fixups_user_type = {
@@ -43,14 +45,11 @@ blob_fixups: blob_fixups_user_type = {
     'system/priv-app/LPPeService/LPPeService.apk': blob_fixup()
         .apktool_patch('blob-patches/LPPeService'),
 
-    'system/lib64/libsource.so': blob_fixup()
+    'system_ext/lib64/libsource.so': blob_fixup()
         .add_needed('libui_shim.so'),
 
-    'system/lib64/libsink-mtk.so': blob_fixup()
+    'system_ext/lib64/libsink.so': blob_fixup()
         .add_needed('libaudioclient_shim.so'),
-
-    'system/lib64/libimsma.so': blob_fixup()
-        .replace_needed('libsink.so', 'libsink-mtk.so'),        
 
     (
         'system/lib/libem_support_jni.so',
