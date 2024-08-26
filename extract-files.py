@@ -40,7 +40,7 @@ lib_fixups: lib_fixups_user_type = {
 blob_fixups: blob_fixups_user_type = {
 
     'system/priv-app/ImsService/ImsService.apk': blob_fixup()
-        .apktool_patch('blob-patches/ImsService'),
+        .apktool_patch('blob-patches/ImsService.patch'),
 
     'system/priv-app/LPPeService/LPPeService.apk': blob_fixup()
         .apktool_patch('blob-patches/LPPeService'),
