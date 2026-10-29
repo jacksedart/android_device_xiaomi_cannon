@@ -322,7 +322,15 @@ blob_fixups: blob_fixups_user_type = {
         ),
          
     'vendor/lib64/hw/hwcomposer.mt6853.so' : blob_fixup()
-         .add_needed('libprocessgroup_shim.so')
+         .add_needed('libprocessgroup_shim.so'),
+
+    (
+        'vendor/lib/libdpframework.so',
+        'vendor/lib64/libdpframework.so',
+        'vendor/lib/libgralloc_extra.so',
+        'vendor/lib64/libgralloc_extra.so'
+    ): blob_fixup()
+        .replace_needed('libutilscallstack.so', 'libshim_callstack.so')
 
 }  # fmt: skip
 
