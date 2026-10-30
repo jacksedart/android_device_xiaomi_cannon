@@ -49,7 +49,8 @@ blob_fixups: blob_fixups_user_type = {
         .add_needed('libui_shim.so'),
 
     'system_ext/lib64/libsink.so': blob_fixup()
-        .add_needed('libaudioclient_shim.so'),
+        .add_needed('libaudioclient_shim.so')
+        .replace_needed('libsensorndkbridge.so', 'android.hardware.sensors@1.0-convert-shared.so'),
 
     (
         'system/lib/libem_support_jni.so',
