@@ -43,7 +43,7 @@ blob_fixups: blob_fixups_user_type = {
         .apktool_patch('blob-patches/ImsService.patch'),
 
     'system/priv-app/LPPeService/LPPeService.apk': blob_fixup()
-        .apktool_patch('blob-patches/LPPeService'),
+        .apktool_patch('blob-patches/LPPeService.patch'),
 
     'system_ext/lib64/libsource.so': blob_fixup()
         .add_needed('libui_shim.so'),
