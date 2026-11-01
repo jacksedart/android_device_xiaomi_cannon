@@ -49,6 +49,7 @@
         <permission name="android.permission.BLUETOOTH_SCAN"/>
         <permission name="android.permission.BLUETOOTH_CONNECT"/>
         <permission name="android.permission.INTERNET"/>
+        <permission name="android.permission.LOCATION_BYPASS"/>
     </privapp-permissions>
 
 </permissions>
