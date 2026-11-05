@@ -1,0 +1,3 @@
+# Preserve the required space on empty context lines in carried unified diffs.
+# Applied C++ source still receives normal whitespace checks in CI.
+patches/bluetooth/*.patch whitespace=-blank-at-eol

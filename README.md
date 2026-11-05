@@ -24,3 +24,10 @@ Copyright (C) 2022 StatiX
 | Rear camera 3           | 2 MP, f/2.4, (macro)                                     | 2 MP, f/2.4, (depth)                                     |
 | Front camera            | 13 MP, f/2.3, 29mm (standard), 1/3.1", 1.12µm            | 13 MP, f/2.3, 29mm (standard), 1/3.1", 1.12µm            |
 | Image                   | ![Redmi Note 9 5G](https://fdn2.gsmarena.com/vv/pics/xiaomi/xiaomi-redmi-note-9-5g-1.jpg) | ![Redmi Note 9T 5G](https://fdn2.gsmarena.com/vv/pics/xiaomi/xiaomi-redmi-note-9t-5g-1.jpg) |
+
+## Bluetooth platform patch (draft)
+
+The cannon Bluetooth response-compatibility opt-in requires a matching change
+in `packages/modules/Bluetooth`. See [integration and validation requirements](patches/bluetooth/README.md)
+before building this branch. The carried patch has not yet been compiled or
+validated on hardware.

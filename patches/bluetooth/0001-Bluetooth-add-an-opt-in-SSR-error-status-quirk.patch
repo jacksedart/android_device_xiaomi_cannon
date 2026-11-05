@@ -1,0 +1,247 @@
+From de2f41ca771327113e40b6ae4fcaeede9d62358b Mon Sep 17 00:00:00 2001
+From: Yossef-Dawoad <273859359+joedexdev@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 17:30:52 +0200
+Subject: [PATCH] Bluetooth: add an opt-in SSR error-status quirk
+
+Legacy controllers can reject Sniff Subrating (0x0811) with a Command
+Status event carrying Unsupported Remote/LMP Feature (0x1a). A caller
+waiting for Command Complete currently aborts the Bluetooth process.
+
+Allow affected products to opt in to handling that exact response. Build
+a typed failed SniffSubratingComplete using the pending command's handle
+and the controller's original error and credits, then retain normal queue
+advancement and timeout cleanup. Leave all other response checks intact.
+
+Add seven host regression cases for the typed result, command credits,
+queue progress, normal completions, and the opt-in/opcode/status bounds.
+
+The property defaults false. Products must explicitly enable it after
+integrating and validating this platform patch.
+
+Link: https://github.com/TrebleDroid/platform_packages_modules_Bluetooth/commit/cd1aff46e5a863e8e891b29008bf7e0c5757290e
+Test: git diff --check and clean-index patch application
+Not-run: bluetooth_test_gd_unit (no Android build environment available)
+---
+ system/gd/hci/hci_layer.cc          |  28 ++++-
+ system/gd/hci/hci_layer_unittest.cc | 162 ++++++++++++++++++++++++++++
+ 2 files changed, 188 insertions(+), 2 deletions(-)
+
+diff --git a/system/gd/hci/hci_layer.cc b/system/gd/hci/hci_layer.cc
+index 1311815..a47b2b0 100644
+--- a/system/gd/hci/hci_layer.cc
++++ b/system/gd/hci/hci_layer.cc
+@@ -238,8 +238,32 @@ struct HciLayer::impl {
+     using WaitingFor = CommandQueueEntry::WaitingFor;
+     WaitingFor waiting_for = command_queue_.front().waiting_for_;
+     CommandStatusView status_view = CommandStatusView::Create(event);
+-    if (is_vendor_specific && (is_status && waiting_for == WaitingFor::COMPLETE) &&
+-        (status_view.IsValid() && status_view.GetStatus() == ErrorCode::UNKNOWN_HCI_COMMAND)) {
++    // Opt in only affected products. Some legacy controllers reject Sniff Subrating
++    // with Command Status (0x1a), although this command expects Command Complete.
++    // Preserve the failure and connection handle; do not turn it into success.
++    const bool legacy_ssr_error =
++            op_code == OpCode::SNIFF_SUBRATING && is_status &&
++            waiting_for == WaitingFor::COMPLETE && status_view.IsValid() &&
++            status_view.GetStatus() == ErrorCode::UNSUPPORTED_REMOTE_OR_LMP_FEATURE &&
++            os::GetSystemPropertyBool("bluetooth.hci.sniff_subrating_status_quirk.enabled", false);
++    if (legacy_ssr_error) {
++      auto command = SniffSubratingView::Create(ConnectionManagementCommandView::Create(
++              AclCommandView::Create(*command_queue_.front().command_view)));
++      log::assert_that(command.IsValid(), "Invalid pending Sniff Subrating command");
++      log::warn("Applying Sniff Subrating status-response quirk for {}",
++                ErrorCodeText(status_view.GetStatus()));
++      auto complete = std::make_shared<std::vector<uint8_t>>(
++              SniffSubratingCompleteBuilder::Create(status_view.GetNumHciCommandPackets(),
++                                                    status_view.GetStatus(),
++                                                    command.GetConnectionHandle())
++                      ->SerializeToBytes());
++      auto complete_view =
++              CommandCompleteView::Create(EventView::Create(PacketView<kLittleEndian>(complete)));
++      log::assert_that(complete_view.IsValid(), "Invalid synthesized Sniff Subrating completion");
++      (*command_queue_.front().GetCallback<CommandCompleteView>())(complete_view);
++    } else if (is_vendor_specific && (is_status && waiting_for == WaitingFor::COMPLETE) &&
++               (status_view.IsValid() &&
++                status_view.GetStatus() == ErrorCode::UNKNOWN_HCI_COMMAND)) {
+       // If this is a command status of a vendor specific command, and command complete is expected,
+       // we can't treat this as hard failure since we have no way of probing this lack of support at
+       // earlier time. Instead we let the command complete handler handle a empty Command Complete
+diff --git a/system/gd/hci/hci_layer_unittest.cc b/system/gd/hci/hci_layer_unittest.cc
+index 1f2526e..5f40042 100644
+--- a/system/gd/hci/hci_layer_unittest.cc
++++ b/system/gd/hci/hci_layer_unittest.cc
+@@ -22,6 +22,8 @@
+ #include <chrono>
+ #include <future>
+ #include <memory>
++#include <optional>
++#include <string>
+ 
+ #include "common/bind.h"
+ #include "hal/hci_hal_fake.h"
+@@ -450,6 +452,166 @@ TEST_F(HciLayerTest, vendor_specific_status_instead_of_complete) {
+   ASSERT_EQ(OpCode::LE_GET_VENDOR_CAPABILITIES, callback_future.get());
+ }
+ 
++// These property-driven regression tests use the host in-memory property store.
++// Android device tests cannot assume permission to change Bluetooth properties.
++#ifndef __ANDROID__
++class HciSsrStatusQuirkTest : public HciLayerTest {
++protected:
++  static constexpr const char* kQuirkProperty =
++          "bluetooth.hci.sniff_subrating_status_quirk.enabled";
++  std::optional<std::string> original_property_;
++
++  void SetUp() override {
++    original_property_ = os::GetSystemProperty(kQuirkProperty);
++    ASSERT_TRUE(os::SetSystemProperty(kQuirkProperty, "true"));
++    HciLayerTest::SetUp();
++    FailIfResetNotSent();
++    hal_->InjectEvent(ResetCompleteBuilder::Create(1, ErrorCode::SUCCESS));
++    sync_handler();
++  }
++
++  void TearDown() override {
++    HciLayerTest::TearDown();
++    // Empty has the same default-false behavior as an absent property.
++    EXPECT_TRUE(os::SetSystemProperty(kQuirkProperty, original_property_.value_or("")));
++  }
++
++  std::future<CommandCompleteView> SendSniffSubrating() {
++    std::promise<CommandCompleteView> promise;
++    auto future = promise.get_future();
++    hci_->EnqueueCommand(
++            SniffSubratingBuilder::Create(0x123, 0x04b0, 0x0002, 0x0002),
++            hci_handler_->BindOnce([](std::promise<CommandCompleteView> promise,
++                                      CommandCompleteView view) { promise.set_value(view); },
++                                   std::move(promise)));
++    return future;
++  }
++
++  void ExpectSniffSubratingSent() {
++    auto sent = hal_->GetSentCommand();
++    ASSERT_TRUE(sent.has_value());
++    ASSERT_EQ(OpCode::SNIFF_SUBRATING, sent->GetOpCode());
++  }
++
++  void QueueReset() {
++    hci_->EnqueueCommand(ResetBuilder::Create(),
++                         hci_handler_->BindOnce([](CommandCompleteView view) {
++                           EXPECT_TRUE(ResetCompleteView::Create(view).IsValid());
++                         }));
++    sync_handler();
++  }
++
++  void CompleteQueuedReset() {
++    auto sent = hal_->GetSentCommand();
++    ASSERT_TRUE(sent.has_value());
++    ASSERT_TRUE(ResetView::Create(*sent).IsValid());
++    hal_->InjectEvent(ResetCompleteBuilder::Create(1, ErrorCode::SUCCESS));
++    sync_handler();
++  }
++};
++
++class HciSsrStatusQuirkDeathTest : public HciSsrStatusQuirkTest {};
++
++TEST_F(HciSsrStatusQuirkTest, preserves_failure_handle_and_advances_command_queue) {
++  auto future = SendSniffSubrating();
++  ExpectSniffSubratingSent();
++  QueueReset();
++  hal_->InjectEvent(CommandStatusBuilder::Create(ErrorCode::UNSUPPORTED_REMOTE_OR_LMP_FEATURE, 1,
++                                                 OpCode::SNIFF_SUBRATING,
++                                                 std::make_unique<RawBuilder>()));
++  ASSERT_EQ(std::future_status::ready, future.wait_for(1s));
++  auto complete = SniffSubratingCompleteView::Create(future.get());
++  ASSERT_TRUE(complete.IsValid());
++  EXPECT_EQ(ErrorCode::UNSUPPORTED_REMOTE_OR_LMP_FEATURE, complete.GetStatus());
++  EXPECT_EQ(0x123, complete.GetConnectionHandle());
++  EXPECT_EQ(1, complete.GetNumHciCommandPackets());
++  CompleteQueuedReset();
++}
++
++TEST_F(HciSsrStatusQuirkTest, zero_credits_wait_for_a_later_credit_event) {
++  auto future = SendSniffSubrating();
++  ExpectSniffSubratingSent();
++  QueueReset();
++  hal_->InjectEvent(CommandStatusBuilder::Create(ErrorCode::UNSUPPORTED_REMOTE_OR_LMP_FEATURE, 0,
++                                                 OpCode::SNIFF_SUBRATING,
++                                                 std::make_unique<RawBuilder>()));
++  ASSERT_EQ(std::future_status::ready, future.wait_for(1s));
++  auto complete = SniffSubratingCompleteView::Create(future.get());
++  ASSERT_TRUE(complete.IsValid());
++  EXPECT_EQ(ErrorCode::UNSUPPORTED_REMOTE_OR_LMP_FEATURE, complete.GetStatus());
++  EXPECT_EQ(0, complete.GetNumHciCommandPackets());
++  EXPECT_FALSE(hal_->GetSentCommand(10ms).has_value());
++  hal_->InjectEvent(NoCommandCompleteBuilder::Create(1));
++  CompleteQueuedReset();
++}
++
++TEST_F(HciSsrStatusQuirkTest, normal_complete_response_is_unchanged) {
++  auto future = SendSniffSubrating();
++  ExpectSniffSubratingSent();
++  hal_->InjectEvent(SniffSubratingCompleteBuilder::Create(1, ErrorCode::SUCCESS, 0x123));
++  ASSERT_EQ(std::future_status::ready, future.wait_for(1s));
++  auto complete = SniffSubratingCompleteView::Create(future.get());
++  ASSERT_TRUE(complete.IsValid());
++  EXPECT_EQ(ErrorCode::SUCCESS, complete.GetStatus());
++  EXPECT_EQ(0x123, complete.GetConnectionHandle());
++}
++
++TEST_F(HciSsrStatusQuirkDeathTest, disabled_quirk_keeps_original_assertion) {
++  ASSERT_TRUE(os::SetSystemProperty(kQuirkProperty, "false"));
++  ASSERT_DEATH(
++          {
++            auto future = SendSniffSubrating();
++            ExpectSniffSubratingSent();
++            hal_->InjectEvent(CommandStatusBuilder::Create(
++                    ErrorCode::UNSUPPORTED_REMOTE_OR_LMP_FEATURE, 1, OpCode::SNIFF_SUBRATING,
++                    std::make_unique<RawBuilder>()));
++            sync_handler();
++          },
++          "was not expecting status event");
++}
++
++TEST_F(HciSsrStatusQuirkDeathTest, successful_status_is_not_treated_as_failure_completion) {
++  ASSERT_DEATH(
++          {
++            auto future = SendSniffSubrating();
++            ExpectSniffSubratingSent();
++            hal_->InjectEvent(CommandStatusBuilder::Create(ErrorCode::SUCCESS, 1,
++                                                           OpCode::SNIFF_SUBRATING,
++                                                           std::make_unique<RawBuilder>()));
++            sync_handler();
++          },
++          "was not expecting status event");
++}
++
++TEST_F(HciSsrStatusQuirkDeathTest, another_error_is_not_covered_by_the_quirk) {
++  ASSERT_DEATH(
++          {
++            auto future = SendSniffSubrating();
++            ExpectSniffSubratingSent();
++            hal_->InjectEvent(CommandStatusBuilder::Create(ErrorCode::COMMAND_DISALLOWED, 1,
++                                                           OpCode::SNIFF_SUBRATING,
++                                                           std::make_unique<RawBuilder>()));
++            sync_handler();
++          },
++          "was not expecting status event");
++}
++
++TEST_F(HciSsrStatusQuirkDeathTest, another_opcode_is_not_covered_by_the_quirk) {
++  ASSERT_DEATH(
++          {
++            QueueReset();
++            auto sent = hal_->GetSentCommand();
++            ASSERT_TRUE(sent.has_value());
++            ASSERT_TRUE(ResetView::Create(*sent).IsValid());
++            hal_->InjectEvent(
++                    CommandStatusBuilder::Create(ErrorCode::UNSUPPORTED_REMOTE_OR_LMP_FEATURE, 1,
++                                                 OpCode::RESET, std::make_unique<RawBuilder>()));
++            sync_handler();
++          },
++          "was not expecting status event");
++}
++#endif  // !__ANDROID__
++
+ TEST_F(HciLayerDeathTest,
+        command_complete_callback_is_invoked_with_an_opcode_that_does_not_match_command_queue) {
+   ASSERT_DEATH(

@@ -1,0 +1,49 @@
+name: Bluetooth patch applicability
+
+on:
+  push:
+    branches: [fix/cannon-bluetooth-ssr-status]
+    paths:
+      - system.prop
+      - patches/bluetooth/**
+      - .github/workflows/bluetooth-patch.yml
+  pull_request:
+    paths:
+      - system.prop
+      - patches/bluetooth/**
+      - .github/workflows/bluetooth-patch.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  patch-applicability:
+    name: Platform patch applicability (no C++ build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      BLUETOOTH_BASE: 0d2d485867791015ef4ee235c2a668b83bea1f1d
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Apply the carried patch to its pinned public baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          module_dir="$RUNNER_TEMP/cannon-bluetooth"
+          patch_file="$GITHUB_WORKSPACE/patches/bluetooth/0001-Bluetooth-add-an-opt-in-SSR-error-status-quirk.patch"
+          git init --quiet "$module_dir"
+          git -C "$module_dir" remote add origin https://github.com/LineageOS/android_packages_modules_Bluetooth.git
+          git -C "$module_dir" sparse-checkout init --cone
+          git -C "$module_dir" sparse-checkout set system/gd/hci
+          git -C "$module_dir" fetch --quiet --depth=1 --filter=blob:none origin "$BLUETOOTH_BASE"
+          git -C "$module_dir" checkout --quiet --detach FETCH_HEAD
+          test "$(git -C "$module_dir" rev-parse HEAD)" = "$BLUETOOTH_BASE"
+          git -C "$module_dir" apply --check "$patch_file"
+          git -C "$module_dir" apply "$patch_file"
+          git -C "$module_dir" diff --check
+          git -C "$module_dir" apply --reverse --check "$patch_file"
+          git -C "$module_dir" diff --stat
+          grep -Fx 'bluetooth.hci.sniff_subrating_status_quirk.enabled=true' system.prop

@@ -4,6 +4,10 @@ persist.audio.button_jack.switch=0
 ro.audio.silent=0
 vendor.audio.spkcal.copy.inhal=true
 
+# Bluetooth
+# Requires the matching platform patch in patches/bluetooth/.
+bluetooth.hci.sniff_subrating_status_quirk.enabled=true
+
 # Dex
 persist.bg.dexopt.enable=true
 
