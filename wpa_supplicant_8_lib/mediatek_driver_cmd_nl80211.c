@@ -489,11 +489,26 @@ static int mediatek_send_sw_cmd(void* priv, int set, u32* adr, u32* dat) {
  */
 static int mediatek_set_country_code(void* priv, const char* alpha2_arg) {
     struct i802_bss* bss = priv;
-    struct wpa_driver_nl80211_data* drv = bss->drv;
+    struct wpa_driver_nl80211_data* drv = bss ? bss->drv : NULL;
     int ioctl_sock = -1;
     struct iwreq iwr;
     int ret = -1;
     char buf[11];
+    const char* ifname = NULL;
+
+    if (!bss) {
+        wpa_printf(MSG_ERROR, "%s: bss is null", __func__);
+        return -1;
+    }
+
+    if (bss->ifname[0]) {
+        ifname = bss->ifname;
+    } else if (drv && drv->first_bss && drv->first_bss->ifname[0]) {
+        ifname = drv->first_bss->ifname;
+    } else {
+        wpa_printf(MSG_ERROR, "%s: no valid ifname found", __func__);
+        return -1;
+    }
 
     ioctl_sock = socket(PF_INET, SOCK_DGRAM, 0);
     if (ioctl_sock < 0) {
@@ -502,7 +517,7 @@ static int mediatek_set_country_code(void* priv, const char* alpha2_arg) {
     }
 
     os_memset(&iwr, 0, sizeof(iwr));
-    os_strlcpy(iwr.ifr_name, drv->first_bss->ifname, IFNAMSIZ);
+    os_strlcpy(iwr.ifr_name, ifname, IFNAMSIZ);
     iwr.ifr_name[IFNAMSIZ - 1] = '\0';
 
     ret = os_snprintf(buf, sizeof(buf), "COUNTRY %s", alpha2_arg);
