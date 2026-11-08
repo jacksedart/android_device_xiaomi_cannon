@@ -439,8 +439,10 @@ static int wpa_driver_mediatek_set_country(void* priv, const char* alpha2_arg) {
     os_memset(&iwr, 0, sizeof(iwr));
     os_strlcpy(iwr.ifr_name, ifname, IFNAMSIZ);
     ret = snprintf(buf, sizeof(buf), "COUNTRY %s", alpha2_arg);
-    if (ret < 0 || ret > sizeof(buf)) {
+    if (ret < 0 || (size_t)ret >= sizeof(buf)) {
         wpa_printf(MSG_DEBUG, "%s: snprintf failed:%d", __func__, ret);
+        close(ioctl_sock);
+        return -1;
     }
     iwr.u.data.pointer = buf;
     iwr.u.data.length = strlen(buf);
